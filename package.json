@@ -1,6 +1,6 @@
 {
     "name": "dkrdeploy",
-    "version": "0.0.2",
+    "version": "0.0.3",
     "description": "deploy to a remote docker using ssh and sftp",
     "main": "index.js",
     "author": "aviv ron <aviv1ron1@gmail.com>",
@@ -10,6 +10,7 @@
     },
     "dependencies": {
         "async": "^2.0.0-rc.6",
+        "colors": "^1.1.2",
         "prompt": "^1.0.0",
         "ssh2": "^0.5.0"
     },
