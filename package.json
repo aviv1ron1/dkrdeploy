@@ -1,0 +1,16 @@
+{
+    "name": "dkrdeploy",
+    "version": "0.0.1",
+    "description": "deploy to a remote docker using ssh and sftp",
+    "main": "index.js",
+    "author": "aviv ron aviv1ron1@gmail.com",
+    "license": "MIT",
+    "bin": {
+        "dkrdeploy": "index.js"
+    },
+    "dependencies": {
+        "async": "^2.0.0-rc.6",
+        "prompt": "^1.0.0",
+        "ssh2": "^0.5.0"
+    }
+}
