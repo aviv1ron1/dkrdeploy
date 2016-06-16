@@ -1,9 +1,9 @@
 {
     "name": "dkrdeploy",
-    "version": "0.0.1",
+    "version": "0.0.2",
     "description": "deploy to a remote docker using ssh and sftp",
     "main": "index.js",
-    "author": "aviv ron aviv1ron1@gmail.com",
+    "author": "aviv ron <aviv1ron1@gmail.com>",
     "license": "MIT",
     "bin": {
         "dkrdeploy": "index.js"
@@ -12,5 +12,10 @@
         "async": "^2.0.0-rc.6",
         "prompt": "^1.0.0",
         "ssh2": "^0.5.0"
-    }
+    },
+    "preferGlobal": true,
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/aviv1ron1/dkrdeploy"
+    },
 }
