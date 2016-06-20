@@ -1,6 +1,6 @@
 {
     "name": "dkrdeploy",
-    "version": "0.0.3",
+    "version": "0.0.4",
     "description": "deploy to a remote docker using ssh and sftp",
     "main": "index.js",
     "author": "aviv ron <aviv1ron1@gmail.com>",

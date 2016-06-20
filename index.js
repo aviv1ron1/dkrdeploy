@@ -10,10 +10,15 @@ var colors = require("colors/safe");
 var multiprompt = require('prompt');
 
 const DEPLOYERR = "deploy should look like: { files: [<<array of file names to deploy>>], remote: 'path to remote dir', ssh: {<<object of ssh connection proerties>>} }";
-var DKRBUILD = "/root/bin/dockerbuild.sh"
-var DKRRUN = "/root/bin/dockerrun.sh --q"
-var DKRCREATE = "/root/bin/dockercreate.sh"
+var DKRBUILD = "dockerbuild.sh";
+var DKRRUN = "dockerrun.sh";
+var DKRSTOP = "dockerstop.sh";
+var DKRCREATE = "dockercreate.sh";
+var DKRSPECT = "dockerinspect.sh";
+var DKRLOG = "dockerlogs.sh";
+var DOCKER_SCRIPTS = "~/bin/";
 var REMOTE;
+var REMOTE_SUBDIR = "src";
 var REMOTE_SRC;
 
 var no = function() {
@@ -27,6 +32,10 @@ var no = function() {
         }
         return null;
     }
+}
+
+var last = function(str) {
+    return str[str.length - 1];
 }
 
 var getPath = function(resourceName) {
@@ -122,9 +131,11 @@ var sshConnect = (callback) => {
     }
     ssh.on('error', errCb);
     ssh.on('ready', () => {
+        console.log("connected");
         ssh.removeListener('error', errCb);
         callback();
     });
+    console.log("connecting to host " + conn.host);
     ssh.connect(conn);
 }
 
@@ -197,7 +208,7 @@ var createContainer = (callback) => {
     console.log(colors.cyan("now enter your image name, container name, flags:"));
     prompt.get(["image name", "container name", "container flags"], (err, res) => {
         console.log();
-        var dkrcreate = util.format('%s "%s" "%s" "%s"', DKRCREATE, res["image name"], res["container name"], res["container flags"]);
+        var dkrcreate = util.format('%s "%s" "%s" "%s"', DOCKER_SCRIPTS + DKRCREATE, res["image name"], res["container name"], res["container flags"]);
         ssh.exec(cwd(dkrcreate, REMOTE), sshCallback((err, result) => {
             if (err) {
                 callback(err);
@@ -206,6 +217,46 @@ var createContainer = (callback) => {
                 callback();
             }
         }))
+    });
+}
+
+var checkIfDockerScriptsExist = (callback) => {
+    var scripts = [DKRRUN, DKRBUILD, DKRLOG, DKRSPECT, DKRSTOP, DKRCREATE];
+    scripts = scripts.map((script) => {
+        return { path: DOCKER_SCRIPTS + script, name: script }
+    });
+    var copyScripts = [];
+    async.eachSeries(scripts, (script, cb) => {
+        ssh.exec(util.format('test -f %s', script.path), sshCallback((err, result) => {
+            if (err) {
+                prompt.get({
+                    name: 'create',
+                    message: colors.cyan(util.format('there is no %s script at the target. create one at %s [y/n]?', script.name, script.path)),
+                    validator: /y|n/,
+                    warning: 'Must respond yes (y) or no (n)',
+                    default: 'y'
+                }, (err, res) => {
+                    if (!err) {
+                        if (res.create == "y") {
+                            var fullPath = path.join(__dirname, "scripts", script.name);
+                            if (mkdir.indexOf(DOCKER_SCRIPTS) < 0) {
+                                mkdir.push(DOCKER_SCRIPTS);
+                            }
+                            files.push({ Local: fullPath, Remote: script.path, chmod: "744" });
+                            cb();
+                        } else {
+                            cb("aborted by user. must have scripts deployed on the server");
+                        }
+                    } else {
+                        cb(err);
+                    }
+                });
+            } else {
+                cb();
+            }
+        }));
+    }, (err) => {
+        callback(err);
     });
 }
 
@@ -256,7 +307,7 @@ var copyFiles = (callback) => {
                     if (err) {
                         cb({ error: err, task: copyTask });
                     } else {
-                        console.log("copied", copyTask);
+                        console.log("copied ", copyTask.Local, " to ", copyTask.Remote);
                         cb();
                     }
                 });
@@ -265,8 +316,21 @@ var copyFiles = (callback) => {
                     console.error(colors.red("error copying files"), err);
                     callback(err);
                 } else {
-                    console.log("copy completed");
-                    callback();
+                    async.eachSeries(files, (copyTask, cb) => {
+                        if (copyTask.chmod) {
+                            ssh.exec(util.format("chmod %s %s", copyTask.chmod, copyTask.Remote), sshCallback((err, result) => {
+                                cb(err);
+                            }));
+                        } else {
+                            cb();
+                        }
+                    }, (err) => {
+                        if (!err) {
+                            console.log("copy completed");
+                        }
+                        callback(err);
+                    })
+
                 }
             });
         }
@@ -275,7 +339,7 @@ var copyFiles = (callback) => {
 
 
 var build = (callback) => {
-    ssh.exec(cwd(DKRBUILD, REMOTE), sshCallback(function(err, result) {
+    ssh.exec(cwd(DOCKER_SCRIPTS + DKRBUILD, REMOTE), sshCallback(function(err, result) {
         if (err) {
             console.error("failed to run docker build", err);
             callback(err);
@@ -287,7 +351,7 @@ var build = (callback) => {
 }
 
 var run = (callback) => {
-    ssh.exec(cwd(DKRRUN, REMOTE), sshCallback(function(err, result) {
+    ssh.exec(cwd(DOCKER_SCRIPTS + DKRRUN + " --q", REMOTE), sshCallback(function(err, result) {
         if (err) {
             console.error("failed to dockerrun", err);
             callback(err);
@@ -299,17 +363,69 @@ var run = (callback) => {
     }));
 }
 
+var inspect = (callback) => {
+    setTimeout(() => {
+        ssh.exec(cwd(DOCKER_SCRIPTS + DKRSPECT, REMOTE), sshCallback((err, spect) => {
+            if (err) {
+                console.error(err);
+                callback(err);
+            } else {
+                console.log("-------- docker inspect --------");
+                spect = JSON.parse(spect)[0];
+                console.log("name", spect.Name);
+                console.log("state", spect.State.Status);
+                var ports = spect.NetworkSettings.Ports;
+                for (var k in ports) {
+                    var str = util.format("%s --> ", k);
+                    ports[k].forEach((p) => {
+                        str += util.format("%s, ", p.HostPort);
+                    });
+                    console.log(str);
+                }
+                console.log("--------------------------------");
+                callback();
+            }
+        }))
+    }, 1000);
+}
+
+var log = (callback) => {
+    setTimeout(() => {
+        ssh.exec(cwd(DOCKER_SCRIPTS + DKRLOG, REMOTE), sshCallback((err, log) => {
+            if (err) {
+                console.error(err);
+                callback(err);
+            } else {
+                console.log("---------- docker log ----------");
+                console.log(log);
+                console.log("--------------------------------");
+                callback();
+            }
+        }))
+    }, 1000);
+}
+
 if (no(pkg.deploy)) {
     console.error("missing deploy section in package.json");
     console.error(DEPLOYERR);
     process.exit(1);
 } else {
-    var resources = pkg.deploy.files;
-    REMOTE = pkg.deploy.remote;
-    if (REMOTE[REMOTE.length - 1] == '/') {
+    var config = pkg.deploy;
+    var resources = config.files;
+    REMOTE = config.remote;
+    if (last(REMOTE) == '/') {
         REMOTE = REMOTE.substring(0, REMOTE.length - 1);
     }
-    REMOTE_SRC = REMOTE + "/src"
+    if (config.docker_scripts) {
+        DOCKER_SCRIPTS = config.docker_scripts;
+        if (last(DOCKER_SCRIPTS) != '/') {
+            DOCKER_SCRIPTS += "/";
+        }
+    }
+    if (config.remote_subdir) {
+        REMOTE_SUBDIR = config.remote_subdir;
+    }
+    REMOTE_SRC = REMOTE + "/" + REMOTE_SUBDIR;
     var conn = pkg.deploy.ssh;
     var missing = no([REMOTE, conn, resources], ["remote", "ssh", "files"]);
     if (missing) {
@@ -319,13 +435,17 @@ if (no(pkg.deploy)) {
         mkdir.push(REMOTE);
         async.series([
             sshConnect,
+            checkIfDockerScriptsExist,
             mkdirp,
+            copyFiles,
             checkIfDockerfileExists,
             searchAllDirs(resources),
             mkdirp,
             copyFiles,
             build,
-            run
+            run,
+            inspect,
+            log
         ], (err) => {
             if (err) {
                 console.error(err);
@@ -334,72 +454,6 @@ if (no(pkg.deploy)) {
             }
             ssh.end();
             process.exit(1);
-        })
-
-        // walkArray(resources, process.cwd(), REMOTE_SRC, (err, files) => {
-
-        //     ssh.on('ready', function() {
-        //         async.eachSeries(mkdir, (dirname, cb) => {
-        //             ssh.exec('mkdir -p ' + dirname, sshCallback(
-        //                 function(err, result) {
-        //                     if (err) {
-        //                         cb(err);
-        //                     } else {
-        //                         cb();
-        //                     }
-        //                 }));
-        //         }, function(err) {
-        //             if (err) {
-        //                 console.error("failed to mkdir", err);
-        //                 ssh.end();
-        //             } else {
-        //                 console.log("mkdir completed")
-        //                 ssh.sftp((err, sftpStream) => {
-        //                     if (err) {
-        //                         console.error("error opening sftp stream", err);
-        //                         ssh.end();
-        //                     } else {
-        //                         async.eachSeries(files, (copyTask, cb) => {
-        //                             sftpStream.fastPut(copyTask.Local, copyTask.Remote, (err) => {
-        //                                 if (err) {
-        //                                     cb({ error: err, task: copyTask });
-        //                                 } else {
-        //                                     console.log("copied", copyTask);
-        //                                     cb();
-        //                                 }
-        //                             });
-        //                         }, (err) => {
-        //                             if (err) {
-        //                                 console.error("error copying files", err);
-        //                                 ssh.end();
-        //                             } else {
-        //                                 console.log("copy completed");
-        //                                 ssh.exec(cwd('/root/bin/dockerbuild.sh', REMOTE), sshCallback(function(err, result) {
-        //                                     if (err) {
-        //                                         console.error("failed to run docker build", err);
-        //                                         ssh.end();
-        //                                     } else {
-        //                                         console.log("build completed");
-        //                                         ssh.exec(cwd('/root/bin/dockerrun.sh --q', REMOTE), sshCallback(function(err, result) {
-        //                                             if (err) {
-        //                                                 console.error("failed to dockerrun", err);
-        //                                             } else {
-        //                                                 console.log("done!");
-        //                                                 console.log(result);
-        //                                             }
-        //                                             ssh.end();
-        //                                         }));
-        //                                     }
-        //                                 }));
-        //                             }
-        //                         })
-        //                     }
-
-        //                 });
-        //             }
-        //         });
-        //     });
-        //     ssh.connect(conn);
-        // });
+        });
     }
 }
