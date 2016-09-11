@@ -1,5 +1,4 @@
 #!/bin/bash
-set -e
 
 if [ ! -f container.image ]; then
         echo "container.image not found. You must have a file container.image with the image name for this script to work"
@@ -16,8 +15,29 @@ if [ -f container.name ]; then
         NAME="$NAME"
 fi
 
+CMD=""
+
+if [ -f container.cmd ]; then
+        CMD=$(<container.cmd)
+        echo "using cmd $CMD"
+        CMD="$CMD"
+fi
+
+NET=""
+if [ -f container.net ]; then
+        NET=$(<container.net)
+        echo "using net $NET"
+        NET="$NET"
+        NET_EXISTS=$(docker network ls | grep "$NET" | wc -l)
+        if [ $NET_EXISTS -eq 0 ]; then
+                echo "network $NET does not exist. creating in default network configuration bridged isolated"
+                $(docker network create --driver bridge "$NET")
+        fi
+fi
+
 FLAGS=""
 ECHOONLY=false
+RESTART=false
 if [ -f container.flags ]; then
         FLAGS=$(<container.flags)
 fi
@@ -26,9 +46,12 @@ while (( $# > 0 ))
 do
 key="$1"
 case $key in
-	--q)
-		KILLALWAYS=true
-	;;
+        --a)
+                RESTART=true
+        ;;
+        --q)
+                KILLALWAYS=true
+        ;;
         --x)
                 ECHOONLY=true
         ;;
@@ -69,31 +92,43 @@ case $key in
                 done
         ;;
         *)
-                echo "usage: $0 [--name <container name>] [--host <host name>] [--q do not prompt to kill container. kill always] [--x only echo the command, do not run] [--d configure dns] [--flags <list of space separated flags>]"
+                echo "usage: $0 [--name <container name>] [--host <host name>] [--q do not prompt to kill container. kill always] [--x only echo the command, do not run] [--d configure dns] [--a to add restart=unless-stopped] [--flags <list of space separated flags>]"
                 exit 1
         ;;
 esac
 shift
 done
 
-echo "using flags: $FLAGS"
-INSPECT=$(sudo docker inspect $NAME 2>&1 | grep "Error: No such image or container" | wc -l && :)
-if [ $INSPECT -eq 0 ]; then
-	sudo docker ps -a | grep $NAME
-	if [ -z ${KILLALWAYS+x} ]; then
-		echo "container exists. would you like to kill it?"
-		read KILL
-		if [ $KILL == "y" ]; then
-			sudo docker kill $NAME &>/dev/null && :
-	        	sudo docker rm $NAME &>/dev/null && :
-		else
-	        	exit 1
-		fi
-	else
-                sudo docker kill $NAME &>/dev/null && :
-                sudo docker rm $NAME &>/dev/null && :
-	fi
+if $RESTART; then
+        FLAGS="$FLAGS --restart=unless-stopped"
 fi
+
+if [ ! -z "$NET" ]; then
+        FLAGS="$FLAGS --net=$NET"
+fi
+
+eval "echo using flags: $FLAGS"
+
+INSPECT=$(docker inspect $NAME 2>&1 | grep "Error: No such image or container" | wc -l)
+if [ $INSPECT -eq 0 ]; then
+        docker ps -a | grep $NAME
+        if [ -z ${KILLALWAYS+x} ]; then
+                echo "container exists. would you like to kill it?"
+                read KILL
+                if [ $KILL == "y" ]; then
+                        docker kill $NAME &>/dev/null
+                        docker rm $NAME &>/dev/null
+                else
+                        if [ ! $ECHOONLY ]; then
+                              exit 1
+                        fi
+                fi
+        else
+                docker kill $NAME &>/dev/null
+                docker rm $NAME &>/dev/null
+        fi
+fi
+
 
 if [ ! -z "$NAME" ]; then
         NAMEP="--name $NAME"
@@ -102,17 +137,17 @@ if [ ! -z "$HOST" ]; then
         HOSTP="-h $HOST"
 fi
 
-RUN="sudo docker run $NAMEP $HOSTP $DNS $FLAGS $IMAGE"
-echo "$RUN"
+RUN="docker run $NAMEP $HOSTP $DNS $FLAGS $IMAGE $CMD"
+eval "echo $RUN"
 if $ECHOONLY; then
         exit 0
 fi
-CID=$($RUN)
+CID=$(eval "$RUN")
 
 if [ ! -z "$CID" ]; then
-        IPADDR=$(sudo docker inspect --format '{{ .NetworkSettings.IPAddress }}' $CID 2>/dev/null && :)
+        IPADDR=$(docker inspect --format '{{ .NetworkSettings.IPAddress }}' $CID 2>/dev/null)
         echo "IP: $IPADDR"
-        sudo docker inspect --format '{{ if .NetworkSettings.Ports }}{{println "Exposed ports:"}}{{ range $p, $conf := .NetworkSettings.Ports }}{{printf "%s -> %s\n" $p (index $conf 0).HostPort}}{{end}}{{end}}' $CID 2>/dev/null && :
+        docker inspect --format '{{ if .NetworkSettings.Ports }}{{println "Exposed ports:"}}{{ range $p, $conf := .NetworkSettings.Ports }}{{printf "%s -> %s\n" $p (index $conf 0).HostPort}}{{end}}{{end}}' $CID 2>/dev/null
         if [ ! -z "$HOST" ] && [ ! -z "$IPADDR" ]; then
                 awkscript='
                 BEGIN {
@@ -139,3 +174,5 @@ if [ ! -z "$CID" ]; then
                 sudo service dnsmasq restart 1>/dev/null
         fi
 fi
+
+
