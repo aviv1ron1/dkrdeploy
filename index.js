@@ -8,8 +8,9 @@ var util = require('util');
 var prompt = require('prompt');
 var colors = require("colors/safe");
 var multiprompt = require('prompt');
+var args = require('args-usage-env')(require("./args.json"));
 
-const DEPLOYERR = "deploy should look like: { files: [<<array of file names to deploy>>], remote: 'path to remote dir', ssh: {<<object of ssh connection proerties>>} }";
+const DEPLOYERR = "run with -h to get help";
 var DKRBUILD = "dockerbuild.sh";
 var DKRRUN = "dockerrun.sh";
 var DKRSTOP = "dockerstop.sh";
@@ -337,8 +338,18 @@ var copyFiles = (callback) => {
     });
 }
 
+var continueOrExit = (callback) => {
+    if (args["copy-only"]) {
+        console.log("done");
+        ssh.end();
+        process.exit(1);
+    }
+    callback();
+}
+
 
 var build = (callback) => {
+    console.log("building...");
     ssh.exec(cwd(DOCKER_SCRIPTS + DKRBUILD, REMOTE), sshCallback(function(err, result) {
         if (err) {
             console.error("failed to run docker build", err);
@@ -351,6 +362,7 @@ var build = (callback) => {
 }
 
 var run = (callback) => {
+    console.log("running...");
     ssh.exec(cwd(DOCKER_SCRIPTS + DKRRUN + " --q", REMOTE), sshCallback(function(err, result) {
         if (err) {
             console.error("failed to dockerrun", err);
@@ -376,17 +388,19 @@ var inspect = (callback) => {
                 console.log("state", spect.State.Status);
                 var ports = spect.NetworkSettings.Ports;
                 for (var k in ports) {
-                    var str = util.format("%s --> ", k);
-                    ports[k].forEach((p) => {
-                        str += util.format("%s, ", p.HostPort);
-                    });
-                    console.log(str);
+                    if (ports[k]) {
+                        var str = util.format("%s --> ", k);
+                        ports[k].forEach((p) => {
+                            str += util.format("%s, ", p.HostPort);
+                        });
+                        console.log(str);
+                    }
                 }
                 console.log("--------------------------------");
                 callback();
             }
         }))
-    }, 1000);
+    }, args.log * 1000);
 }
 
 var log = (callback) => {
@@ -402,7 +416,7 @@ var log = (callback) => {
                 callback();
             }
         }))
-    }, 1000);
+    }, args.log * 1000);
 }
 
 if (no(pkg.deploy)) {
@@ -411,6 +425,26 @@ if (no(pkg.deploy)) {
     process.exit(1);
 } else {
     var config = pkg.deploy;
+    if (!Array.isArray(config)) {
+        config = [config];
+    }
+    if (args.target) {
+        var found = false;
+        for (var i = 0; i < config.length; i++) {
+            if (config[i].name == args.target) {
+                config = config[i];
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            console.error("target was not found");
+            process.exit(1);
+        }
+    } else {
+        config = config[0];
+    }
+
     var resources = config.files;
     REMOTE = config.remote;
     if (last(REMOTE) == '/') {
@@ -426,7 +460,7 @@ if (no(pkg.deploy)) {
         REMOTE_SUBDIR = config.remote_subdir;
     }
     REMOTE_SRC = REMOTE + "/" + REMOTE_SUBDIR;
-    var conn = pkg.deploy.ssh;
+    var conn = config.ssh;
     var missing = no([REMOTE, conn, resources], ["remote", "ssh", "files"]);
     if (missing) {
         console.error("missing " + missing + " from deploy section in package.json");
@@ -442,6 +476,7 @@ if (no(pkg.deploy)) {
             searchAllDirs(resources),
             mkdirp,
             copyFiles,
+            continueOrExit,
             build,
             run,
             inspect,

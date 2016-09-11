@@ -1,0 +1,53 @@
+[{
+    "header": "docker ssh deployment tool",
+    "content": "deploy local code to a remote docker container via ssh. contact person: rona@il.ibm.com"
+}, {
+    "header": "configuration file",
+    "raw": true,
+    "content": [
+        "in your [bold]{package.json} you should have a property called [bold]{deploy}.",
+        "deploy section may contain one deployment as an object or multiple deployments in an array of objects.",
+        "if multiple deployments are found you may state which one you want to deploy to using the [bold]{target} option.",
+        "if you do not state a target the first one will be used by default",
+        "each deployment object should look like:",
+        "",
+        "{",
+        "  name: [green]{optional if you have only one target - but if you have multiple targets you must give each one a name},",
+        "  files: [",
+        "       [green]{a list of files to deploy to the server. only these files will be copied from your local to the target}",
+        "  ]",
+        "  remote: [green]{the path on the remote server where the deployment will take place, the files will be copied into a folder called 'src' inside this path},",
+        "  ssh: {",
+        "       [green]{ssh connection properties such as:}",
+        "       host: [green]{server name},",
+        "       username: [green]{user name},",
+        "       password: [green]{password},",
+        "  },",
+        "  docker_scripts: [green]{path to docker scripts on the remote server (dockerrun dockerbuild etc...)}",
+        "}"
+    ]
+}, {
+    "header": "Options",
+    "optionList": [{
+        "name": "help",
+        "alias": "h",
+        "typeLabel": "Boolean",
+        "description": "Print this usage guide."
+    }, {
+        "name": "target",
+        "alias": "t",
+        "typeLabel": "String",
+        "description": "target name. if multiple deployment targets exist this name will be used. if not given, the first target will be used by default"
+    }, {
+        "name": "copy-only",
+        "alias": "c",
+        "typeLabel": "Boolean",
+        "description": "if given will only copy the files without initiating docker build and run"
+    }, {
+        "name": "log",
+        "alias": "l",
+        "typeLabel": "Number",
+        "description": "number of seconds of docker log to display after running",
+        "defaultValue": "1"
+    }]
+}]
